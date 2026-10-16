@@ -1,0 +1,80 @@
+# Nomic Lite: a short ruleset for cheaper games. {win_points} is filled in at game creation.
+name: Nomic Lite
+win_points: 40
+rules:
+  - number: 101
+    mutable: false
+    text: >
+      All players must always obey the rules in effect at that moment, in the form they are in
+      at that moment. Every game begins with the Initial Set: Rules 101-105 (immutable) and
+      Rules 201-209 (mutable).
+  - number: 102
+    mutable: false
+    text: >
+      Every rule is either immutable or mutable. If a mutable rule conflicts with an immutable
+      rule, the immutable rule takes precedence and the mutable rule is void.
+  - number: 103
+    mutable: false
+    text: >
+      A rule-change is exactly one of: enacting a new mutable rule; repealing a mutable rule;
+      amending the text of a mutable rule; or transmuting a rule from immutable to mutable or
+      from mutable to immutable. An immutable rule cannot be amended or repealed while it is
+      immutable.
+  - number: 104
+    mutable: false
+    text: >
+      Winning always means being the first player to reach some number of points. The number
+      of points and the ways of earning them may change, but the nature of winning may not.
+  - number: 105
+    mutable: false
+    text: >
+      Whatever is not prohibited or regulated by a rule is permitted and unregulated, except
+      changing the rules, which is permitted only as the rules allow.
+  - number: 201
+    mutable: true
+    text: >
+      Players take turns in the seating order given at the start of the game, one whole turn
+      each, cycling repeatedly. Turns may not be skipped. All players begin with zero points.
+  - number: 202
+    mutable: true
+    text: >
+      A turn has two parts, in order: (1) the active player proposes exactly one rule-change,
+      which all players then vote on; (2) the active player rolls one six-sided die and adds
+      the result to their score.
+  - number: 203
+    mutable: true
+    text: >
+      Each player has exactly one vote on every proposal, either for or against. A proposal is
+      adopted if more than half of the votes cast are in favour, except that a proposal to
+      transmute a rule needs a unanimous vote. An adopted rule-change takes effect as soon as
+      the vote ends.
+  - number: 204
+    mutable: true
+    text: >
+      Proposals are numbered in sequence starting at 301, whether or not they are adopted. A
+      newly enacted rule takes the number of the proposal that enacted it.
+  - number: 205
+    mutable: true
+    text: >
+      A player whose proposal is defeated loses 5 points.
+  - number: 206
+    mutable: true
+    text: >
+      The winner is the first player to reach {win_points} points or more.
+  - number: 207
+    mutable: true
+    text: >
+      Disagreements about the legality of a move, the meaning of a rule or the outcome of a
+      vote are settled by the Judge, an impartial official who is not a player. Any player may
+      raise a dispute when voting. Where the rules are unclear or silent, the Judge follows
+      the spirit of the game.
+  - number: 208
+    mutable: true
+    text: >
+      There may never be more than 15 mutable rules in effect. A proposal that would exceed
+      this limit is illegal.
+  - number: 209
+    mutable: true
+    text: >
+      If the rules ever make it impossible for the active player to complete their turn, that
+      player wins the game.

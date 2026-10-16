@@ -1,0 +1,174 @@
+# Peter Suber's Initial Set (1982), paraphrased for AI play: the Judge is an impartial
+# official rather than a player, and the game is played with a real die roll each turn.
+# {win_points} is filled in at game creation.
+name: Suber's Initial Set
+win_points: 100
+rules:
+  - number: 101
+    mutable: false
+    text: >
+      Every player must always obey all the rules in effect at that moment, in the form they
+      are in at that moment. Every game begins with the Initial Set in effect: Rules 101-116
+      (immutable) and Rules 201-213 (mutable).
+  - number: 102
+    mutable: false
+    text: >
+      Initially, rules numbered in the 100s are immutable and rules numbered in the 200s are
+      mutable. A rule enacted or transmuted later may be immutable or mutable regardless of its
+      number, and any rule of the Initial Set may be transmuted regardless of its number.
+  - number: 103
+    mutable: false
+    text: >
+      A rule-change is any of: (1) enacting, repealing or amending a mutable rule; (2)
+      enacting, repealing or amending an amendment of a mutable rule; (3) transmuting an
+      immutable rule into a mutable one, or a mutable rule into an immutable one. Hence new
+      rules start out mutable, immutable rules cannot be amended or repealed while they are
+      immutable, mutable rules can, and every rule can be transmuted.
+  - number: 104
+    mutable: false
+    text: >
+      Every rule-change proposed in the proper way must be voted on. It is adopted only if it
+      receives the number of votes the rules require.
+  - number: 105
+    mutable: false
+    text: >
+      Every player is an eligible voter, and every eligible voter must take part in every vote
+      on a rule-change.
+  - number: 106
+    mutable: false
+    text: >
+      Every proposed rule-change must be written down before it is voted on. If adopted, it
+      governs play in exactly the wording that was voted on.
+  - number: 107
+    mutable: false
+    text: >
+      No rule-change can take effect before the vote adopting it is complete, whatever its
+      wording says, and no rule-change can apply retroactively.
+  - number: 108
+    mutable: false
+    text: >
+      Every proposed rule-change receives a reference number. Numbering starts at 301 and each
+      properly made proposal receives the next whole number, whether or not it is adopted. A
+      rule that is repealed and re-enacted, amended or transmuted takes the number of the
+      proposal that did so. If an amendment is amended or repealed, the whole rule it belongs
+      to takes the number of that proposal.
+  - number: 109
+    mutable: false
+    text: >
+      A rule-change that transmutes an immutable rule into a mutable one is adopted only by a
+      unanimous vote of the eligible voters. A transmutation is never implied; a proposal must
+      state it explicitly for it to take effect.
+  - number: 110
+    mutable: false
+    text: >
+      When a mutable rule conflicts with an immutable rule, the immutable rule takes
+      precedence and the mutable rule is entirely void. A proposal to transmute an immutable
+      rule does not count as conflicting with that rule.
+  - number: 111
+    mutable: false
+    text: >
+      If a proposed rule-change is unclear, ambiguous, paradoxical or destructive of play, or
+      is arguably several rule-changes combined, or is an amendment that changes nothing, or is
+      otherwise of doubtful value, the other players may suggest amendments or argue against it
+      before the vote. The proposer decides the final wording that is voted on.
+  - number: 112
+    mutable: false
+    text: >
+      What counts as winning may not be changed from reaching some number of points to any
+      other state of affairs. The number of points and the means of earning them may be
+      changed, and rules that name a winner when play cannot continue may be enacted, and while
+      mutable may be amended or repealed.
+  - number: 113
+    mutable: false
+    text: >
+      A player may always forfeit the game instead of continuing or accepting a penalty. No
+      penalty worse than losing, in the view of the player who would suffer it, may be imposed.
+  - number: 114
+    mutable: false
+    text: >
+      There must always be at least one mutable rule. Adopting rule-changes must never become
+      completely impossible.
+  - number: 115
+    mutable: false
+    text: >
+      Rule-changes that affect the rules needed to make or apply rule-changes are as
+      permissible as any other, including rule-changes that amend or repeal their own
+      authority. No rule-change or kind of move is impermissible merely because a rule refers to
+      or applies to itself.
+  - number: 116
+    mutable: false
+    text: >
+      Whatever is not prohibited or regulated by a rule is permitted and unregulated, with the
+      single exception of changing the rules, which is permitted only when a rule or set of
+      rules explicitly or implicitly allows it.
+  - number: 201
+    mutable: true
+    text: >
+      Players take turns in the seating order given at the start of the game, one whole turn
+      each. Turns may not be skipped or passed, and parts of turns may not be left out. All
+      players begin with zero points.
+  - number: 202
+    mutable: true
+    text: >
+      A turn has two parts, in this order: (1) proposing one rule-change and having it voted
+      on; (2) rolling one six-sided die once and adding the number rolled to one's score.
+  - number: 203
+    mutable: true
+    text: >
+      A rule-change is adopted only if the vote is unanimous among the eligible voters. If
+      this rule has not been amended by the end of the second complete round of turns, it
+      automatically changes to require only a simple majority.
+  - number: 204
+    mutable: true
+    text: >
+      Once rule-changes can be adopted without unanimity, each player who votes against a
+      proposal that is adopted gains 10 points.
+  - number: 205
+    mutable: true
+    text: >
+      An adopted rule-change takes full effect at the moment the vote adopting it is complete.
+  - number: 206
+    mutable: true
+    text: >
+      When a proposed rule-change is defeated, the player who proposed it loses 10 points.
+  - number: 207
+    mutable: true
+    text: >
+      Each player always has exactly one vote.
+  - number: 208
+    mutable: true
+    text: >
+      The winner is the first player to reach {win_points} (positive) points.
+  - number: 209
+    mutable: true
+    text: >
+      There may never be more than 25 mutable rules in effect.
+  - number: 210
+    mutable: true
+    text: >
+      Players may not conspire or consult about future rule-changes unless they are
+      teammates. Open debate about the proposal currently before the players is allowed.
+  - number: 211
+    mutable: true
+    text: >
+      If mutable rules conflict with each other, or immutable rules conflict with each other,
+      the rule with the lowest number takes precedence. If one of the conflicting rules
+      explicitly says it defers to, or takes precedence over, another rule or kind of rule,
+      that provision overrides the numerical method. If rules make conflicting claims of that
+      kind, the numerical method applies again.
+  - number: 212
+    mutable: true
+    text: >
+      If players disagree about the legality of a move or the meaning or application of a
+      rule, the question is settled by the Judge, an impartial official who is not a player.
+      Any player may insist on a disagreement, which is called invoking Judgment. The Judge
+      must rule according to the rules in effect; where they are unclear, inconsistent or
+      silent on the question, the Judge considers game custom and the spirit of the game before
+      other standards.
+  - number: 213
+    mutable: true
+    text: >
+      If the rules are changed so that further play is impossible, or the legality of a move
+      cannot be settled with finality, or a move appears equally legal and illegal by the
+      Judge's best reasoning, then the first player unable to complete a turn wins. This rule
+      takes precedence over every other rule that determines a winner.

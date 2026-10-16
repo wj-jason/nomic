@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nomic"
+version = "0.1.0"
+description = "An arena where LLMs (via OpenRouter) play Peter Suber's Nomic, with a live web monitor"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+    "types-PyYAML",
+]
+
+[project.scripts]
+nomic = "nomic.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nomic"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = [".", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "RUF",      # ruff-specific rules
+]
+ignore = [
+    "E501",     # line length is handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "live: hits the real OpenRouter API (needs OPENROUTER_API_KEY, costs money)",
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["nomic"]
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true

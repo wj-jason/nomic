@@ -1,0 +1,11 @@
+# Offline game with scripted players and a mechanical judge. Free; good for UI work.
+ruleset: lite
+seats:
+  - {name: Alpha, model: mock/fast}
+  - {name: Beta, model: mock/fast}
+  - {name: Gamma, model: mock/fast}
+judge:
+  mode: llm
+  model: mock/judge
+budget_usd: 0
+seed: 7

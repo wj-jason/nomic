@@ -1,0 +1,14 @@
+# Recommended table: ~$3/game. Three cheap-tier models, one mid-tier, a cheap judge.
+ruleset: lite
+seats:
+  - {name: Gemini, model: google/gemini-3.7-flash}
+  - {name: Kimi, model: moonshotai/kimi-k2.6}
+  - {name: DeepSeek, model: deepseek/deepseek-v4-pro}
+  - {name: Claude, model: anthropic/claude-sonnet-5.5}
+judge:
+  mode: llm
+  model: deepseek/deepseek-v4-pro
+budget_usd: 5.0
+max_turns: 150
+discussion: true
+reasoning_effort: low
