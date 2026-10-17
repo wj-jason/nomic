@@ -5,7 +5,8 @@
       "name": "nomic",
       "runtimeExecutable": "wsl",
       "runtimeArgs": ["-e", "bash", "-lic", "cd ~/dev/nomic && conda run --no-capture-output -n nomic nomic serve --port 8765 --db data/dev.db"],
-      "port": 8765
+      "port": 8765,
+      "autoPort": false
     }
   ]
 }

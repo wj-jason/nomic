@@ -80,6 +80,108 @@ def test_retries_then_drops_response_format() -> None:
     assert "m/x" in client._no_schema
 
 
+def test_falls_back_to_minimal_reasoning_when_mandatory() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        bodies.append(body)
+        if body["reasoning"]["effort"] == "none":
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Reasoning is mandatory for this endpoint and "
+                        "cannot be disabled.",
+                        "code": 400,
+                    }
+                },
+            )
+        return httpx.Response(200, json=_reply('{"vote": "no", "reason": "r", "dispute": null}'))
+
+    client = OpenRouterClient(api_key="k", transport=httpx.MockTransport(handler))
+
+    async def two_calls() -> None:
+        for _ in range(2):
+            await client.structured("g/x", [], VoteAction, purpose="vote", seat="A", effort="none")
+
+    asyncio.run(two_calls())
+    # first call: rejected, retried with minimal (schema kept); second call goes straight to minimal
+    assert [b["reasoning"]["effort"] for b in bodies] == ["none", "minimal", "minimal"]
+    assert all("response_format" in b for b in bodies)
+    assert "g/x" in client._needs_reasoning and "g/x" not in client._no_schema
+
+
+def test_output_cap_includes_reasoning_allowance() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json=_reply('{"vote": "no", "reason": "r", "dispute": null}'))
+
+    client = OpenRouterClient(api_key="k", transport=httpx.MockTransport(handler))
+    for effort in ("none", "low"):
+        asyncio.run(
+            client.structured("m/x", [], VoteAction, purpose="vote", seat="A", effort=effort)
+        )
+    assert [b["max_tokens"] for b in bodies] == [800, 800 + 2048]
+
+
+def test_judge_has_its_own_reasoning_and_cap() -> None:
+    from nomic.manager import GameManager
+    from nomic.store import Store
+    from tests.conftest import fake_openrouter, mock_config
+
+    async def play() -> list[dict[str, Any]]:
+        client, seen = fake_openrouter()
+        manager = GameManager(Store(), client)
+        cfg = mock_config(
+            seats=[{"name": n, "model": "test/model"} for n in ("Alpha", "Beta")],
+            judge={"mode": "llm", "model": "test/judge"},
+            max_turns=1,
+            reflection=False,
+        )
+        r = manager.create(cfg)
+        await asyncio.wait_for(r.task, 10)  # type: ignore[arg-type]
+        await manager.shutdown()
+        return seen
+
+    seen = asyncio.run(play())
+    kind = {b["response_format"]["json_schema"]["name"]: b for b in seen}
+    judge, player = kind["RulingAction"], kind["VoteAction"]
+    assert judge["reasoning"]["effort"] == "low" and judge["max_tokens"] == 1500 + 2048
+    assert player["reasoning"]["effort"] == "none" and player["max_tokens"] == 800
+
+
+def test_truncated_reply_is_retried_without_echoing_it() -> None:
+    long_reply = '{"vote": "yes", "reason": "' + "hmm " * 500
+    replies = iter(
+        [
+            {
+                "choices": [{"message": {"content": long_reply}, "finish_reason": "length"}],
+                "usage": {"completion_tokens": 800, "cost": 0.003},
+            },
+            _reply('{"vote": "yes", "reason": "short", "dispute": null}'),
+        ]
+    )
+    bodies: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json=next(replies))
+
+    client = OpenRouterClient(api_key="k", transport=httpx.MockTransport(handler))
+    action, calls = asyncio.run(
+        client.structured(
+            "m/x", [{"role": "user", "content": "v"}], VoteAction, purpose="vote", seat="A"
+        )
+    )
+    assert action.reason == "short" and calls[0].error and calls[0].error.startswith("truncated")
+    retry = bodies[1]["messages"]
+    assert "cut off" in retry[-1]["content"]
+    assert all(long_reply not in m["content"] for m in retry)
+
+
 def test_gives_up_and_reports_paid_calls() -> None:
     client = OpenRouterClient(
         api_key="k",

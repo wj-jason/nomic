@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
@@ -20,6 +21,13 @@ from nomic.manager import GameManager
 from nomic.rules import RULESETS, ruleset_info
 from nomic.runner import GameRunner
 from nomic.store import Store
+from nomic.transcript import render_transcript
+from nomic.voice.render import FILES as VOICE_FILES
+from nomic.voice.render import VoiceRenderer
+from nomic.voice.script import VoiceOptions, build_script
+from nomic.voice.script import estimate as voice_length
+from nomic.voice.tts import INSTALL_HINT, REALTIME_FACTOR, Synth, render_device
+from nomic.voice.voices import ALL_VOICES, JUDGE, PREVIEW_TEXT, cast, describe
 
 STATIC = Path(__file__).parent / "static"
 
@@ -37,7 +45,26 @@ class Fork(BaseModel):
     seq: int
 
 
-def create_app(db_path: str = "data/nomic.db", client: OpenRouterClient | None = None) -> FastAPI:
+def _default_synth() -> Callable[[], Synth] | None:
+    from nomic.voice.tts import KokoroSynth, kokoro_available
+
+    return KokoroSynth if kokoro_available() else None
+
+
+def create_app(
+    db_path: str = "data/nomic.db",
+    client: OpenRouterClient | None = None,
+    synth_factory: Callable[[], Synth] | None | str = "auto",
+    audio_dir: str | Path | None = None,
+) -> FastAPI:
+    if audio_dir is None:
+        audio_dir = Path(db_path).parent / "audio" if db_path != ":memory:" else "data/audio"
+    voice = VoiceRenderer(
+        Path(audio_dir),
+        _default_synth() if synth_factory == "auto" else synth_factory,  # type: ignore[arg-type]
+    )
+    voice_tasks: set[asyncio.Task[Any]] = set()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         manager = GameManager(Store(db_path), client)
@@ -45,6 +72,8 @@ def create_app(db_path: str = "data/nomic.db", client: OpenRouterClient | None =
         await manager.refresh_pricing()
         manager.load_all()
         yield
+        for t in voice_tasks:
+            t.cancel()
         await manager.shutdown()
 
     app = FastAPI(title="Nomic Arena", lifespan=lifespan)
@@ -141,6 +170,146 @@ def create_app(db_path: str = "data/nomic.db", client: OpenRouterClient | None =
         runner(game_id)
         mgr().delete(game_id)
         return {"ok": "deleted"}
+
+    @app.post("/api/games/{game_id}/reflect")
+    async def reflect(game_id: str) -> dict[str, str]:
+        r = runner(game_id)
+        try:
+            r.start_reflection()
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": "interviews started"}
+
+    @app.get("/api/games/{game_id}/transcript")
+    async def transcript(game_id: str) -> PlainTextResponse:
+        r = runner(game_id)
+        m = voice.manifest(game_id)
+        audio = f"nomic-{game_id}.mp3 ({m['duration'] / 60:.0f} min)" if m else None
+        return PlainTextResponse(
+            render_transcript(game_id, r.state, r.events, audio=audio),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="nomic-{game_id}.md"'},
+        )
+
+    # ------------------------------------------------------------------ voiceover
+    def voice_overrides(game_id: str) -> dict[str, str]:
+        saved: dict[str, str] = mgr().store.get_setting(game_id, "voices", {})
+        return saved
+
+    @app.get("/api/voices")
+    async def voices_list() -> dict[str, Any]:
+        return {"available": voice.available, "voices": [describe(v) for v in ALL_VOICES]}
+
+    @app.get("/api/voices/{voice_id}/preview")
+    async def voice_preview(voice_id: str) -> FileResponse:
+        if voice_id not in ALL_VOICES:
+            raise HTTPException(404, "unknown voice")
+        if not voice.available:
+            raise HTTPException(501, INSTALL_HINT)
+        return FileResponse(await voice.preview(voice_id, PREVIEW_TEXT), media_type="audio/mpeg")
+
+    @app.get("/api/games/{game_id}/voice/cast")
+    async def voice_cast(game_id: str) -> dict[str, Any]:
+        r = runner(game_id)
+        custom = voice_overrides(game_id)
+        return {"cast": cast(r.state.seat_order, custom), "custom": custom}
+
+    @app.put("/api/games/{game_id}/voice/cast")
+    async def voice_set_cast(game_id: str, body: dict[str, str | None]) -> dict[str, Any]:
+        """Set voices by player name; an empty value goes back to the default."""
+        r = runner(game_id)
+        custom = dict(voice_overrides(game_id))
+        for player, v in body.items():
+            if player not in r.state.players and player != JUDGE:
+                raise HTTPException(400, f"unknown player {player!r}")
+            if not v:
+                custom.pop(player, None)
+            elif v not in ALL_VOICES:
+                raise HTTPException(400, f"unknown voice {v!r}")
+            else:
+                custom[player] = v
+        mgr().store.set_setting(game_id, "voices", custom)
+        return {"cast": cast(r.state.seat_order, custom), "custom": custom}
+
+    @app.get("/api/games/{game_id}/voice/estimate")
+    async def voice_estimate(
+        game_id: str,
+        thinking: bool = False,
+        votes: bool = True,
+        rulings: bool = True,
+        rule_text: bool = False,
+        interviews: bool = False,
+    ) -> dict[str, Any]:
+        r = runner(game_id)
+        opts = VoiceOptions(
+            thinking=thinking,
+            votes=votes,
+            rulings=rulings,
+            rule_text=rule_text,
+            interviews=interviews,
+        )
+        lines, voices = build_script(r.state.seat_order, r.events, opts, voice_overrides(game_id))
+        device = render_device() if voice.available else "cpu"
+        return {
+            **voice_length(lines),
+            "voices": voices,
+            "available": voice.available,
+            "device": device,
+            "realtime_factor": REALTIME_FACTOR[device],
+        }
+
+    @app.post("/api/games/{game_id}/voice")
+    async def voice_start(game_id: str, opts: VoiceOptions) -> dict[str, Any]:
+        r = runner(game_id)
+        if not voice.available:
+            raise HTTPException(501, INSTALL_HINT)
+        if voice.busy(game_id):
+            return voice.status(game_id)
+        lines, voices = build_script(r.state.seat_order, r.events, opts, voice_overrides(game_id))
+        if not lines:
+            raise HTTPException(400, "nothing to voice yet: no completed turns")
+        task = asyncio.create_task(
+            voice.render(
+                game_id,
+                lines,
+                voices,
+                opts,
+                on_progress=lambda s: r.broadcast({"type": "voice", "status": s}),
+            )
+        )
+        voice_tasks.add(task)
+        task.add_done_callback(voice_tasks.discard)
+        await asyncio.sleep(0)  # let it register as queued
+        return voice.status(game_id)
+
+    @app.delete("/api/games/{game_id}/voice")
+    async def voice_cancel(game_id: str) -> dict[str, Any]:
+        runner(game_id)
+        if not voice.cancel(game_id):
+            raise HTTPException(409, "no voiceover is rendering for this game")
+        return voice.status(game_id)
+
+    @app.get("/api/games/{game_id}/voice")
+    async def voice_get(game_id: str) -> dict[str, Any]:
+        runner(game_id)
+        return {
+            "available": voice.available,
+            "status": voice.status(game_id),
+            "manifest": voice.manifest(game_id),
+        }
+
+    @app.get("/api/games/{game_id}/voice/files/{name}")
+    async def voice_file(game_id: str, name: str) -> FileResponse:
+        runner(game_id)
+        path = voice.game_dir(game_id) / name
+        if name not in VOICE_FILES or not path.exists():
+            raise HTTPException(404, "no such voiceover file")
+        media = {
+            "game.mp3": "audio/mpeg",
+            "game.vtt": "text/vtt",
+            "manifest.json": "application/json",
+        }[name]
+        return FileResponse(path, media_type=media)
 
     @app.get("/api/games/{game_id}/stats")
     async def stats(game_id: str) -> list[dict[str, Any]]:

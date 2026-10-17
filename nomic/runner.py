@@ -58,13 +58,19 @@ class GameRunner:
         self.task: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
         self._step = False
-        if events:
-            for ev in events:
-                self.state.apply(ev)
-                self.events.append(ev)
-            self.rng = random.Random(f"{cfg.seed}:{len(events)}")
+        self._ended_here = False  # game_over emitted by this process (not just loaded)
+        self._stopping = False
+        self._reflecting = False
+        self.reflect_task: asyncio.Task[int] | None = None
+        for ev in events or []:
+            self.state.apply(ev)
+            self.events.append(ev)
+        # Dice: fresh OS randomness unless the config pins a seed (for reproducible test
+        # games; a reloaded seeded game continues from a seed derived from its length).
+        if cfg.seed is None:
+            self.rng = random.Random()
         else:
-            self.rng = random.Random(cfg.seed)
+            self.rng = random.Random(f"{cfg.seed}:{len(self.events)}" if events else cfg.seed)
         self._build_agents()
 
     # ------------------------------------------------------------------ plumbing
@@ -75,13 +81,20 @@ class GameRunner:
     def emit(self, type_: str, actor: str, data: dict[str, Any]) -> Event:
         ev = Event(seq=len(self.events) + 1, type=type_, actor=actor, data=data)
         self.state.apply(ev)  # raises before anything is persisted if the event is invalid
+        if type_ == "game_over":
+            self._ended_here = True
         self.events.append(ev)
         self.store.append_event(self.id, ev)
         self._broadcast({"type": "event", "event": ev.model_dump(), "state": self.snapshot()})
         return ev
 
     def snapshot(self) -> dict[str, Any]:
-        return {"id": self.id, **self.state.to_dict(), "pending": self.inbox.list()}
+        return {
+            "id": self.id,
+            **self.state.to_dict(),
+            "pending": self.inbox.list(),
+            "reflecting": self._reflecting,
+        }
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -90,6 +103,10 @@ class GameRunner:
 
     def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]) -> None:
         self.subscribers.discard(q)
+
+    def broadcast(self, msg: dict[str, Any]) -> None:
+        """Push a non-event message (e.g. voiceover progress) to every subscriber."""
+        self._broadcast(msg)
 
     def _broadcast(self, msg: dict[str, Any]) -> None:
         for q in self.subscribers:
@@ -156,7 +173,10 @@ class GameRunner:
             self.task = asyncio.create_task(self.run(), name=f"game-{self.id}")
 
     async def stop(self) -> None:
+        self._stopping = True
         self.inbox.cancel_all()
+        if self.reflect_task is not None:
+            self.reflect_task.cancel()
         if self.task is not None:
             self.task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -189,6 +209,42 @@ class GameRunner:
                 self._step = False
                 self.pause("stepped one turn")
         self.inbox.cancel_all()
+        # Post-game interviews, only for a game that just ended here (never on reload).
+        if self._ended_here and self.cfg.reflection and not self._stopping:
+            await self.reflect()
+
+    def start_reflection(self) -> None:
+        """Run the interviews in the background (for games that ended without them)."""
+        if self.state.status != "over":
+            raise ValueError("the game is not over yet")
+        if self.reflect_task is None or self.reflect_task.done():
+            self.reflect_task = asyncio.create_task(self.reflect(), name=f"reflect-{self.id}")
+
+    async def reflect(self) -> int:
+        """Ask every model seat without a reflection yet for its post-game interview."""
+        if self._reflecting:
+            return 0
+        names = [
+            n
+            for n in self.state.seat_order
+            if not self.state.players[n].human and n not in self.state.reflections
+        ]
+        self._reflecting = True
+        try:
+            results = await asyncio.gather(
+                *(self._act(n, "reflect") for n in names), return_exceptions=True
+            )
+        finally:
+            self._reflecting = False
+        done = 0
+        for n, res in zip(names, results, strict=True):
+            if isinstance(res, BaseException):
+                log.warning("game %s: %s's reflection failed: %s", self.id, n, res)
+                continue
+            action, cid = res
+            self.emit("reflection", n, {"player": n, **action.model_dump(), "call_id": cid})
+            done += 1
+        return done
 
     async def _gate(self) -> None:
         """Block while paused; pause automatically when the budget is spent."""
@@ -296,6 +352,20 @@ class GameRunner:
             raise
         return reply.action, self._record_calls(reply.calls)
 
+    def _emit_message(self, player: str, action: BaseModel, cid: int | None, kind: str) -> None:
+        d = action.model_dump()
+        self.emit(
+            "message",
+            player,
+            {
+                "player": player,
+                "text": d["message"],
+                "thinking": d["thinking"],
+                "kind": kind,
+                "call_id": cid,
+            },
+        )
+
     async def _play_turn(self) -> None:
         st, cfg = self.state, self.cfg
         if st.completed_turns >= cfg.max_turns:
@@ -324,24 +394,37 @@ class GameRunner:
             {"number": number, "player": player, **action.model_dump(), "call_id": cid},
         )
 
+        # Everyone else, in rotation from the proposer's left, so the first to speak (and
+        # vote) changes every turn.
+        i = st.seat_order.index(player)
+        others = st.seat_order[i + 1 :] + st.seat_order[:i]
         if cfg.discussion:
+            # The other players comment (in parallel), then the proposer answers them.
             await self._gate()
-            said = await asyncio.gather(*(self._act(n, "discuss") for n in st.seat_order))
-            for n, (a, cid) in zip(st.seat_order, said, strict=True):
-                self.emit(
-                    "message",
-                    n,
-                    {
-                        "player": n,
-                        "text": a.model_dump()["message"],
-                        "kind": "discussion",
-                        "call_id": cid,
-                    },
-                )
+            said = await asyncio.gather(*(self._act(n, "discuss") for n in others))
+            for n, (a, cid) in zip(others, said, strict=True):
+                self._emit_message(n, a, cid, "discussion")
+            await self._gate()
+            a, cid = await self._act(player, "rebut")
+            self._emit_message(player, a, cid, "rebuttal")
 
+        # The proposer's own vote is recorded as "yes" without a model call.
+        self.emit(
+            "vote",
+            "system",
+            {
+                "player": player,
+                "vote": "yes",
+                "reason": "Own proposal (recorded automatically).",
+                "dispute": None,
+                "thinking": "",
+                "auto": True,
+                "call_id": None,
+            },
+        )
         await self._gate()
-        votes = await asyncio.gather(*(self._act(n, "vote") for n in st.seat_order))
-        for n, (a, cid) in zip(st.seat_order, votes, strict=True):
+        votes = await asyncio.gather(*(self._act(n, "vote") for n in others))
+        for n, (a, cid) in zip(others, votes, strict=True):
             self.emit("vote", n, {"player": n, **a.model_dump(), "call_id": cid})
 
         self.emit("dice_roll", "system", {"player": player, "value": self.rng.randint(1, 6)})

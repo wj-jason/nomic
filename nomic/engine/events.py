@@ -18,6 +18,7 @@ Event types and their ``data``:
 - model_swapped  {player, model}
 - budget_changed {budget_usd}
 - llm_usage      {call_id, seat, model, purpose, cost, prompt_tokens, completion_tokens, cached_tokens}
+- reflection     {player, overview, key_decisions, would_change, about_others, call_id}
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ EVENT_TYPES = frozenset(
         "model_swapped",
         "budget_changed",
         "llm_usage",
+        "reflection",
     }
 )
 

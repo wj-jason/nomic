@@ -41,8 +41,8 @@ class LLMJudge:
             RulingAction,
             purpose="ruling",
             seat="judge",
-            effort=self.cfg.reasoning_effort,
-            max_tokens=self.cfg.max_output_tokens,
+            effort=self.cfg.judge.reasoning_effort,
+            max_tokens=self.cfg.judge.max_output_tokens,
         )
 
 
@@ -92,6 +92,8 @@ class MockJudge:
         winner = next((n for n in state.seat_order if totals[n] >= target), None)
         return (
             RulingAction(
+                thinking=f"Counting votes: {yes} of {k} in favour. Applying the initial rules "
+                "mechanically.",
                 legal=legal,
                 passed=passed,
                 rule_changes=changes if passed else [],

@@ -24,10 +24,28 @@ def mock_config(**overrides: Any) -> GameConfig:
 
 
 CANNED: dict[str, dict[str, Any]] = {
-    "ProposalAction": {"op": "enact", "target_rule": None, "text": "Be nice.", "summary": "Nice."},
-    "DiscussAction": {"message": "Sounds good."},
-    "VoteAction": {"vote": "yes", "reason": "Fine.", "dispute": None},
+    "ReflectionAction": {
+        "overview": "Fine.",
+        "key_decisions": "Voted yes.",
+        "would_change": "Nothing.",
+        "about_others": "All fine.",
+    },
+    "ProposalAction": {
+        "thinking": "SECRET-propose plan.",
+        "op": "enact",
+        "target_rule": None,
+        "text": "Be nice.",
+        "summary": "Nice.",
+    },
+    "DiscussAction": {"thinking": "SECRET-discuss plan.", "message": "Sounds good."},
+    "VoteAction": {
+        "thinking": "SECRET-vote plan.",
+        "vote": "yes",
+        "reason": "Fine.",
+        "dispute": None,
+    },
     "RulingAction": {
+        "thinking": "SECRET-ruling plan.",
         "legal": True,
         "passed": True,
         "rule_changes": [],

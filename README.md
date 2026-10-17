@@ -53,6 +53,41 @@ PROPOSE → DISCUSS (optional) → VOTE (parallel) → die roll → JUDGE → ap
   - `model: mock/...` is an offline scripted player.
   - `mock/slow` is the same with a delay, so you can watch it in the UI.
 
+## Thinking
+
+Every reply from a player or judge starts with a `thinking` field: its private reasoning, at
+most 3 sentences. The server trims anything longer. The thinking is stored with each event and
+shown in the feed when you tick **💭 Show thinking**. It never goes into another player's or the
+judge's prompt.
+
+Native (hidden) reasoning is off by default (`reasoning_effort: none`). That makes calls several
+times faster and cheaper than letting the model reason privately at length. You can turn it back
+on per game with `reasoning_effort` set to `low`, `medium` or `high`.
+
+## Voiceovers
+
+Any game can be turned into audio with local [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
+text-to-speech. It's free and offline, and each player gets its own voice. Install the optional
+extra once:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU build, ~200 MB
+pip install -e ".[voice]"
+```
+
+In a game, **🔊 Voiceover** lets you choose what is spoken:
+- thinking, read as quieter "asides";
+- vote reasons;
+- full rule text;
+- post-game interviews.
+
+It shows the length and then renders in the background (about 5× realtime on CPU). Every line
+is cached, so updating a live game only renders its new lines.
+
+A player bar under the game plays the whole game. It highlights each feed item as it's spoken
+and has "▶" on each item to play from there. It also offers **⬇ MP3**, with chapters per turn,
+and **⬇ Captions** (WebVTT). Files live in `data/audio/<game id>/`.
+
 ## Rulesets
 
 - `lite` (default): 14 rules, first to 40 points, simple majority. About 1.1k tokens.

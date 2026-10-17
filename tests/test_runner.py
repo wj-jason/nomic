@@ -31,7 +31,9 @@ def test_mock_game_reaches_a_winner_deterministically(ruleset: str) -> None:
     first, second = asyncio.run(play()), asyncio.run(play())
     winner, turns, types = first
     assert first == second
-    assert winner is not None and types[-1] == "game_over"
+    # the game ends, then each player gives its post-game interview
+    over = types.index("game_over")
+    assert winner is not None and types[over + 1 :] == ["reflection"] * 3
     assert "rule_changed" in types and turns < 150
 
 
@@ -48,16 +50,26 @@ def test_llm_game_records_costs_and_pauses_at_budget() -> None:
         await _wait(lambda: r.state.status == "paused")
         st = r.state
         assert "budget" in st.status_reason
-        # turn 1 = 1 propose + 3 discuss + 3 votes + 1 ruling = $0.08; turn 2 then pauses
-        # between phases (propose + discussion) once spend reaches $0.12
-        assert st.completed_turns == 1 and st.total_cost == pytest.approx(0.12)
-        assert st.phase == "discussion"
+        # turn 1 = 1 propose + 2 comments + 1 rebuttal + 2 votes (the proposer's is automatic)
+        # + 1 ruling = $0.07; turn 2 then pauses before judging once spend reaches $0.13
+        assert st.completed_turns == 1 and st.total_cost == pytest.approx(0.13)
+        assert st.phase == "judging"
         assert st.players["Alpha"].score == 3 and 301 in st.rules
         assert st.judge_cost == pytest.approx(0.01)
         # our cache markers never reach a non-Anthropic provider
         assert all("cache" not in m for body in seen for m in body["messages"])
         calls = manager.store.call_stats(r.id)
-        assert sum(c["calls"] for c in calls) == 12
+        assert sum(c["calls"] for c in calls) == 13
+        turn1 = st.finished_turns[0]
+        assert [m["kind"] for m in turn1.messages] == ["discussion", "discussion", "rebuttal"]
+        assert turn1.messages[-1]["player"] == "Alpha"
+        assert turn1.votes["Alpha"]["auto"] and turn1.votes["Alpha"]["vote"] == "yes"
+        # the proposer was never asked to comment or vote on its own proposal
+        purposes = [(e.data["seat"], e.data["purpose"]) for e in r.events if e.type == "llm_usage"][
+            :7
+        ]
+        assert ("Alpha", "discuss") not in purposes and ("Alpha", "vote") not in purposes
+        assert ("Alpha", "rebut") in purposes
         # raising the budget lets it continue
         r.intervene("set_budget", {"budget_usd": 1.0})
         r.resume()
@@ -114,7 +126,6 @@ def test_human_seat_and_human_judge() -> None:
         cfg = mock_config(
             seats=[{"name": "Me", "model": None}, {"name": "Bot", "model": "mock/fast"}],
             judge={"mode": "human", "model": "mock/judge"},
-            discussion=False,
         )
         r = manager.create(cfg)
         await _wait(lambda: r.inbox.list())
@@ -123,13 +134,16 @@ def test_human_seat_and_human_judge() -> None:
         r.inbox.respond(
             req["id"], {"op": "enact", "target_rule": None, "text": "Hats.", "summary": "hats"}
         )
-        await _wait(lambda: any(p["kind"] == "vote" for p in r.inbox.list()))
-        vote = r.inbox.list()[0]
-        r.inbox.respond(vote["id"], {"vote": "yes", "reason": "mine", "dispute": None})
+        # Bot comments, then I get the rebuttal (and no vote request: mine is automatic)
+        await _wait(lambda: any(p["kind"] == "rebut" for p in r.inbox.list()))
+        assert r.state.current_turn and r.state.current_turn.messages[0]["player"] == "Bot"
+        rebut = r.inbox.list()[0]
+        r.inbox.respond(rebut["id"], {"message": "Hats for everyone!"})
         await _wait(lambda: any(p["kind"] == "ruling" for p in r.inbox.list()))
         ruling_req = r.inbox.list()[0]
+        assert r.state.current_turn and r.state.current_turn.votes["Me"]["auto"]
         draft = ruling_req["context"]["draft"]
-        assert draft is not None and draft["passed"]
+        assert draft is not None
         draft["score_deltas"] = [{"player": "Me", "delta": 40, "reason": "judge's whim"}]
         draft["winner"] = "Me"
         r.inbox.respond(ruling_req["id"], draft)
@@ -178,6 +192,67 @@ def test_interventions_fork_and_reload(tmp_path: Any) -> None:
         await manager.shutdown()
 
     asyncio.run(reload())
+
+
+def test_speaking_order_rotates_from_the_proposers_left() -> None:
+    async def play() -> list[tuple[str, list[str], list[str]]]:
+        manager = GameManager(Store(), fake_openrouter()[0])
+        cfg = mock_config(
+            seats=[{"name": n, "model": "mock/fast"} for n in ("A", "B", "C", "D")],
+            max_turns=4,
+            reflection=False,
+        )
+        r = manager.create(cfg)
+        await asyncio.wait_for(r.task, 10)  # type: ignore[arg-type]
+        await manager.shutdown()
+        return [
+            (
+                t.player,
+                [m["player"] for m in t.messages if m["kind"] == "discussion"],
+                [p for p, v in t.votes.items() if not v.get("auto")],
+            )
+            for t in r.state.finished_turns
+        ]
+
+    turns = asyncio.run(play())
+    assert [t[0] for t in turns] == ["A", "B", "C", "D"]
+    expected = {
+        "A": ["B", "C", "D"],
+        "B": ["C", "D", "A"],
+        "C": ["D", "A", "B"],
+        "D": ["A", "B", "C"],
+    }
+    for proposer, comments, votes in turns:
+        assert comments == expected[proposer] and votes == expected[proposer]
+
+
+def test_unseeded_dice_are_unpredictable_even_after_reload() -> None:
+    from nomic.engine.events import Event
+    from nomic.runner import GameRunner
+
+    cfg = mock_config(seed=None)
+    created = Event(
+        seq=1,
+        type="game_created",
+        actor="s",
+        data={
+            "config": cfg.model_dump(),
+            "rules": [],
+            "win_points": 40,
+            "players": [{"name": s.name, "model": s.model} for s in cfg.seats],
+        },
+    )
+
+    def rolls() -> list[int]:
+        r = GameRunner("g", cfg, Store(), fake_openrouter()[0], events=[created])
+        return [r.rng.randint(1, 6) for _ in range(30)]
+
+    # Two reloads of the same game at the same point must not replay the same dice.
+    assert rolls() != rolls()
+    seeded = mock_config(seed=5)
+    a = GameRunner("g", seeded, Store(), fake_openrouter()[0], events=[created])
+    b = GameRunner("g", seeded, Store(), fake_openrouter()[0], events=[created])
+    assert [a.rng.random() for _ in range(5)] == [b.rng.random() for _ in range(5)]
 
 
 def test_turn_cap_ends_game() -> None:

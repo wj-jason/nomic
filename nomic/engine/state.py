@@ -140,6 +140,7 @@ class GameState:
     seat_order: list[str] = field(default_factory=list)
     turns: list[TurnRecord] = field(default_factory=list)
     gm_log: list[dict[str, Any]] = field(default_factory=list)  # GM messages & human edits
+    reflections: dict[str, dict[str, Any]] = field(default_factory=dict)  # post-game, by player
     status: str = "created"  # created | running | paused | over
     status_reason: str = ""
     winner: str | None = None
@@ -265,6 +266,9 @@ class GameState:
     def _on_budget_changed(self, ev: Event, d: dict[str, Any]) -> None:
         self.budget_usd = float(d["budget_usd"])
 
+    def _on_reflection(self, ev: Event, d: dict[str, Any]) -> None:
+        self.reflections[d["player"]] = d
+
     def _on_llm_usage(self, ev: Event, d: dict[str, Any]) -> None:
         cost = float(d.get("cost") or 0.0)
         self.total_cost += cost
@@ -355,6 +359,7 @@ class GameState:
             ],
             "current_turn": asdict(cur) if cur else None,
             "gm_log": self.gm_log[-20:],
+            "reflections": self.reflections,
             "judge_cost": self.judge_cost,
             "total_cost": self.total_cost,
             "budget_usd": self.budget_usd,

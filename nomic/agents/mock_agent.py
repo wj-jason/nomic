@@ -7,7 +7,7 @@ import random
 import zlib
 
 from nomic.agents.base import Reply
-from nomic.engine.actions import DiscussAction, ProposalAction, VoteAction
+from nomic.engine.actions import DiscussAction, ProposalAction, ReflectionAction, VoteAction
 from nomic.engine.state import GameState
 
 _FLAVOURS = [
@@ -40,6 +40,7 @@ class MockAgent:
                 n = rng.choice(enacted)
                 return Reply(
                     ProposalAction(
+                        thinking=f"Rule {n} is mine to tidy. Low risk, likely to pass.",
                         op="amend",
                         target_rule=n,
                         text=rng.choice(_FLAVOURS),
@@ -48,6 +49,7 @@ class MockAgent:
                 )
             return Reply(
                 ProposalAction(
+                    thinking="A harmless rule should pass and avoid the defeat penalty.",
                     op="enact",
                     text=rng.choice(_FLAVOURS),
                     summary="A harmless flavour rule.",
@@ -56,11 +58,35 @@ class MockAgent:
         if kind == "discuss":
             return Reply(
                 DiscussAction(
+                    thinking="Nothing here changes the balance of power.",
                     message=rng.choice(
                         ["Seems fine to me.", "I'm not convinced.", "Let's keep the game moving."]
-                    )
+                    ),
+                )
+            )
+        if kind == "reflect":
+            return Reply(
+                ReflectionAction(
+                    overview=f"I finished on {state.players[player].score} points.",
+                    key_decisions="I proposed harmless flavour rules so they would pass.",
+                    would_change="Propose rules that actually earn me points.",
+                    about_others="Everyone played it safe; nobody took real risks.",
+                )
+            )
+        if kind == "rebut":
+            return Reply(
+                DiscussAction(
+                    thinking="Reassure the doubters; it costs me nothing.",
+                    message="It's harmless, I promise. Vote yes and we all move on.",
                 )
             )
         own = state.current_turn is not None and state.current_turn.player == player
         yes = own or rng.random() < self.yes_rate
-        return Reply(VoteAction(vote="yes" if yes else "no", reason="Scripted vote.", dispute=None))
+        return Reply(
+            VoteAction(
+                thinking="My own proposal, so yes." if own else "Rolling the dice on this one.",
+                vote="yes" if yes else "no",
+                reason="Scripted vote.",
+                dispute=None,
+            )
+        )

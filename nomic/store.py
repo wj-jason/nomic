@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     extra TEXT
 );
 CREATE INDEX IF NOT EXISTS llm_calls_game ON llm_calls (game_id);
+CREATE TABLE IF NOT EXISTS game_settings (
+    game_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (game_id, key)
+);
 """
 
 
@@ -84,8 +90,28 @@ class Store:
 
     def delete_game(self, game_id: str) -> None:
         with self.db:
-            for table, col in (("events", "game_id"), ("llm_calls", "game_id"), ("games", "id")):
+            for table, col in (
+                ("events", "game_id"),
+                ("llm_calls", "game_id"),
+                ("game_settings", "game_id"),
+                ("games", "id"),
+            ):
                 self.db.execute(f"DELETE FROM {table} WHERE {col} = ?", (game_id,))
+
+    # per-game settings that aren't part of the game itself (e.g. voiceover casting)
+    def get_setting(self, game_id: str, key: str, default: Any = None) -> Any:
+        row = self.db.execute(
+            "SELECT value FROM game_settings WHERE game_id = ? AND key = ?", (game_id, key)
+        ).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_setting(self, game_id: str, key: str, value: Any) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO game_settings (game_id, key, value) VALUES (?,?,?) "
+                "ON CONFLICT (game_id, key) DO UPDATE SET value = excluded.value",
+                (game_id, key, json.dumps(value)),
+            )
 
     # events
     def append_event(self, game_id: str, ev: Event) -> None:

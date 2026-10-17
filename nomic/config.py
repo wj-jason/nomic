@@ -30,6 +30,10 @@ class JudgeConfig(BaseModel):
     # llm_with_human_override: seconds to wait for a human verdict before the LLM draft
     # stands. None waits indefinitely.
     review_seconds: float | None = None
+    # The judge does the bookkeeping (thresholds, stacked point rules), so unlike players it
+    # gets hidden reasoning by default, and room to answer after it.
+    reasoning_effort: ReasoningEffort = "low"
+    max_output_tokens: int = Field(default=1500, ge=256)
 
 
 class GameConfig(BaseModel):
@@ -40,8 +44,13 @@ class GameConfig(BaseModel):
     budget_usd: float = Field(default=5.0, ge=0)
     max_turns: int = Field(default=150, ge=1)
     discussion: bool = True
-    reasoning_effort: ReasoningEffort = "low"
-    max_output_tokens: int = Field(default=4000, ge=256)
+    # Native (hidden) reasoning. Off by default: every action carries a short visible
+    # "thinking" field instead, which is faster and cheaper.
+    reasoning_effort: ReasoningEffort = "none"
+    # Cap on the visible answer (reasoning headroom is added per effort). Bounds the cost of a
+    # reply that runs away, and what OpenRouter reserves from your balance per request.
+    max_output_tokens: int = Field(default=800, ge=256)
+    reflection: bool = True  # post-game interview from each model seat when the game ends
     history_turns: int = Field(default=3, ge=0)  # turns shown in full; older ones are digested
     seed: int | None = None
 

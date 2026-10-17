@@ -1,13 +1,13 @@
 # Suber's full Initial Set with the original 100-point target. Expect ~3-4x the cost of lite.
 ruleset: suber
 seats:
-  - {name: Gemini, model: google/gemini-3.7-flash}
-  - {name: Kimi, model: moonshotai/kimi-k2.6}
-  - {name: DeepSeek, model: deepseek/deepseek-v4-pro}
+  - {name: gemini, model: google/gemini-3.7-flash}
+  - {name: kimi, model: moonshotai/kimi-k2.6}
+  - {name: deepseek, model: deepseek/deepseek-v4-pro}
 judge:
   mode: llm
   model: anthropic/claude-sonnet-5.5
 budget_usd: 15.0
 max_turns: 150
 discussion: true
-reasoning_effort: low
+reasoning_effort: none

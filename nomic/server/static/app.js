@@ -22,6 +22,17 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// A player's post-game interview (used in the feed and the stats tab).
+function reflectionView(d) {
+  const part = (label, text) => h("div", { class: "reflect-part" }, h("div", { class: "reflect-label" }, label), h("div", {}, text));
+  return h("div", { class: "stack" },
+    h("strong", {}, `🗣 ${d.player} looks back`),
+    part("How it went", d.overview),
+    part("Key decisions", d.key_decisions),
+    part("Would change", d.would_change),
+    part("On the others", d.about_others));
+}
+
 // replaceChildren, skipping null/false children (which the DOM would print as text)
 function fill(el, ...children) {
   el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
@@ -86,24 +97,57 @@ window.addEventListener("DOMContentLoaded", route);
 // ---------------------------------------------------------------- home
 const PRESETS = {
   "Recommended (~$3)": {
-    seats: [
-      ["Gemini", "google/gemini-3.7-flash"], ["Kimi", "moonshotai/kimi-k2.6"],
-      ["DeepSeek", "deepseek/deepseek-v4-pro"], ["Claude", "anthropic/claude-sonnet-5.5"],
-    ],
+    seats: ["google/gemini-3.7-flash", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-pro",
+      "anthropic/claude-sonnet-5.5"],
     judge: "deepseek/deepseek-v4-pro",
   },
   "Budget (<$1)": {
-    seats: [
-      ["Haiku", "anthropic/claude-haiku-5.5"], ["Luna", "openai/gpt-6-luna"],
-      ["Flash", "deepseek/deepseek-v4-flash"],
-    ],
+    seats: ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "deepseek/deepseek-v4-flash"],
     judge: "deepseek/deepseek-v4-flash",
   },
   "Mock (free, offline)": {
-    seats: [["Alpha", "mock/slow"], ["Beta", "mock/slow"], ["Gamma", "mock/slow"]],
+    seats: ["mock/slow", "mock/slow", "mock/slow"],
     judge: "mock/judge",
   },
 };
+
+// Seat names come from the model: "deepseek/deepseek-v4-flash" -> "deepseek". Different models
+// of one family get their descriptors ("deepseek-flash" / "deepseek-pro", "claude-sonnet" /
+// "claude-haiku") or, lacking any, their slug ("gpt-5.5"). The same model twice is numbered
+// ("deepseek-1" / "deepseek-2").
+const VERSION_TOKEN = /^(v|k)?\d[\d.]*[a-z]?$/i;
+
+function nameCandidates(model) {
+  const [vendor, rest] = model.includes("/") ? model.split("/", 2) : ["", model];
+  if (vendor === "mock") return ["mock", "mock", "mock"];
+  const slug = rest.split(":")[0].toLowerCase();
+  const tokens = slug.split(/[-_]/).filter(Boolean);
+  const family = tokens[0].replace(/[\d.]+.*$/, "") || tokens[0];
+  const descriptors = tokens.slice(1).filter((t) => !VERSION_TOKEN.test(t));
+  return [family, descriptors.length ? [family, ...descriptors].join("-") : slug, slug];
+}
+
+function seatNames(models) {
+  // name each distinct model, escalating only where different models clash
+  const ids = [...new Set(models.filter(Boolean))];
+  const parts = ids.map(nameCandidates);
+  const names = parts.map((p) => p[0]);
+  for (let level = 1; level < 3; level++) {
+    const clash = names.map((n) => names.filter((x) => x === n).length > 1);
+    names.forEach((_, i) => { if (clash[i]) names[i] = parts[i][level]; });
+  }
+  const byId = Object.fromEntries(ids.map((id, i) => [id, names[i]]));
+  // then number repeats of the same model
+  const total = {};
+  const seen = {};
+  models.forEach((m) => { if (m) total[m] = (total[m] || 0) + 1; });
+  return models.map((m) => {
+    if (!m) return null;
+    if (total[m] === 1) return byId[m];
+    seen[m] = (seen[m] || 0) + 1;
+    return `${byId[m]}-${seen[m]}`;
+  });
+}
 
 function renderHome() {
   const app = $("#app");
@@ -143,16 +187,33 @@ async function buildForm(box) {
     ...models.map((m) => h("option", { value: m.id }, `$${m.prompt.toFixed(2)} / $${m.completion.toFixed(2)} per M`)));
 
   const seatsBox = h("div", { class: "stack" });
-  const addSeat = (name = "", model = "") => {
+  // Names follow the model until you type your own name into a seat.
+  const renameSeats = () => {
+    const rows = [...seatsBox.children];
+    const names = seatNames(rows.map((r) => r.modelValue()));
+    rows.forEach((r, i) => { if (r.autoName && names[i]) r.nameIn.value = names[i]; });
+  };
+  const addSeat = (model = "") => {
     const human = h("input", { type: "checkbox", title: "Human seat (you play)" });
     const modelIn = h("input", { list: "models", placeholder: "openrouter model id", value: model });
-    human.addEventListener("change", () => { modelIn.disabled = human.checked; update(); });
-    const row = h("div", { class: "seat-row" },
-      h("input", { placeholder: "name", value: name, class: "seat-name" }), modelIn,
+    // placeholder name until a model is picked
+    const nameIn = h("input", { placeholder: "name", class: "seat-name", value: `p${seatsBox.children.length + 1}` });
+    const row = h("div", { class: "seat-row" }, nameIn, modelIn,
       h("label", { class: "small row" }, human, "human"),
-      h("button", { class: "btn tiny", type: "button", onclick: () => { row.remove(); update(); } }, "✕"));
-    row.read = () => ({ name: row.querySelector(".seat-name").value.trim(), model: human.checked ? null : modelIn.value.trim() });
+      h("button", { class: "btn tiny", type: "button", onclick: () => { row.remove(); renameSeats(); update(); } }, "✕"));
+    row.nameIn = nameIn;
+    row.autoName = true;
+    row.modelValue = () => (human.checked ? null : modelIn.value.trim());
+    row.read = () => ({ name: nameIn.value.trim(), model: row.modelValue() });
+    nameIn.addEventListener("input", () => { row.autoName = nameIn.value.trim() === ""; if (row.autoName) renameSeats(); });
+    modelIn.addEventListener("input", renameSeats);
+    human.addEventListener("change", () => {
+      modelIn.disabled = human.checked;
+      if (human.checked && row.autoName) { nameIn.value = "you"; row.autoName = false; }
+      renameSeats(); update();
+    });
     seatsBox.append(row);
+    renameSeats();
   };
 
   const f = {
@@ -165,10 +226,13 @@ async function buildForm(box) {
       h("option", { value: "human" }, "I am the judge")),
     judgeModel: h("input", { list: "models", placeholder: "judge model" }),
     review: h("input", { type: "number", min: 0, placeholder: "∞", title: "Seconds before the LLM draft stands" }),
+    judgeEffort: h("select", { title: "Hidden reasoning for the judge (it does the score bookkeeping)" },
+      ...["none", "minimal", "low", "medium", "high"].map((e) => h("option", { value: e, selected: e === "low" }, e))),
     budget: h("input", { type: "number", min: 0, step: "0.5", value: 5 }),
     maxTurns: h("input", { type: "number", min: 1, value: 150 }),
     discussion: h("input", { type: "checkbox", checked: true }),
-    effort: h("select", {}, ...["none", "minimal", "low", "medium", "high"].map((e) => h("option", { value: e, selected: e === "low" }, e))),
+    reflection: h("input", { type: "checkbox", checked: true }),
+    effort: h("select", {}, ...["none", "minimal", "low", "medium", "high"].map((e) => h("option", { value: e, selected: e === "none" }, e))),
     seed: h("input", { type: "number", placeholder: "random" }),
   };
   const estBox = h("div", { class: "estimate small" }, "…");
@@ -179,10 +243,12 @@ async function buildForm(box) {
       ruleset: f.ruleset.value,
       seats: [...seatsBox.children].map((r) => r.read()),
       judge: { mode: f.judgeMode.value, model: f.judgeModel.value.trim() || null,
-               review_seconds: f.review.value === "" ? null : Number(f.review.value) },
+               review_seconds: f.review.value === "" ? null : Number(f.review.value),
+               reasoning_effort: f.judgeEffort.value },
       budget_usd: Number(f.budget.value || 0),
       max_turns: Number(f.maxTurns.value || 150),
       discussion: f.discussion.checked,
+      reflection: f.reflection.checked,
       reasoning_effort: f.effort.value,
     };
     if (f.win.value) cfg.win_points = Number(f.win.value);
@@ -205,7 +271,7 @@ async function buildForm(box) {
   const applyPreset = (name) => {
     const p = PRESETS[name];
     seatsBox.replaceChildren();
-    p.seats.forEach(([n, m]) => addSeat(n, m));
+    p.seats.forEach((m) => addSeat(m));
     f.judgeModel.value = p.judge;
     update();
   };
@@ -216,7 +282,7 @@ async function buildForm(box) {
     h("div", { class: "row small" }, "Presets:", ...Object.keys(PRESETS).map((n) => h("button", { class: "btn tiny", type: "button", onclick: () => applyPreset(n) }, n))),
     h("h3", {}, "Seats"),
     seatsBox,
-    h("button", { class: "btn tiny", type: "button", onclick: () => { addSeat(`P${seatsBox.children.length + 1}`, ""); update(); } }, "+ seat"),
+    h("button", { class: "btn tiny", type: "button", onclick: () => { addSeat(""); update(); } }, "+ seat"),
     h("h3", {}, "Rules & judge"),
     h("div", { class: "row" },
       h("label", { class: "field" }, "Ruleset", f.ruleset),
@@ -224,14 +290,16 @@ async function buildForm(box) {
       h("label", { class: "field" }, "Judge", f.judgeMode)),
     h("div", { class: "row", style: "margin-top:8px" },
       h("label", { class: "field grow" }, "Judge model", f.judgeModel),
+      h("label", { class: "field" }, "Judge reasoning", f.judgeEffort),
       h("label", { class: "field" }, "Review timeout (s)", f.review)),
     h("h3", {}, "Limits"),
     h("div", { class: "row" },
       h("label", { class: "field" }, "Budget $", f.budget),
       h("label", { class: "field" }, "Turn cap", f.maxTurns),
-      h("label", { class: "field" }, "Reasoning", f.effort),
+      h("label", { class: "field" }, "Player reasoning", f.effort),
       h("label", { class: "field" }, "Seed", f.seed),
-      h("label", { class: "small row" }, f.discussion, "discussion phase")),
+      h("label", { class: "small row" }, f.discussion, "discussion phase"),
+      h("label", { class: "small row", title: "When the game ends, each AI player reviews its decisions" }, f.reflection, "post-game interviews")),
     h("h3", {}, "Estimate"),
     estBox,
     h("div", { class: "row", style: "margin-top:12px" },
@@ -258,7 +326,23 @@ function renderGame(id) {
   const scoreBox = h("div");
   const toolsBox = h("div");
   const side = h("div", { class: "panel side" }, scoreBox, toolsBox);
-  app.replaceChildren(bar, h("div", { class: "game" }, rulesBox, centre, side));
+  const gameGrid = h("div", { class: "game" }, rulesBox, centre, side);
+  const statsBox = h("div", { class: "viz-root" });
+  let tab = location.hash.endsWith("/stats") ? "stats" : "game";
+  const tabBtn = (key, label) => h("button", { class: "tab", role: "tab", "data-tab": key, onclick: () => setTab(key) }, label);
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("game", "Game"), tabBtn("stats", "📊 Stats"));
+  const renderStatsNow = () => { if (state) renderStats(statsBox, state, events); };
+  const renderStatsSoon = debounce(renderStatsNow, 400);
+  function setTab(key) {
+    tab = key;
+    gameGrid.hidden = key !== "game";
+    statsBox.hidden = key !== "stats";
+    for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.tab === key));
+    history.replaceState(null, "", `#/game/${id}${key === "stats" ? "/stats" : ""}`);
+    if (key === "stats") renderStatsNow();
+  }
+  const voice = createVoice(id, feed, centre);
+  app.replaceChildren(bar, tabs, gameGrid, statsBox, voice.bar);
 
   let state = null;
   let pendingKey = "";
@@ -266,8 +350,16 @@ function renderGame(id) {
   const openRules = new Set();
   let ws = null;
   let closed = false;
+  let showThinking = false;
+  try { showThinking = localStorage.getItem("nomic.showThinking") === "1"; } catch (e) { /* storage blocked */ }
+  feed.classList.toggle("show-thinking", showThinking);
+  const setThinking = (on) => {
+    showThinking = on;
+    feed.classList.toggle("show-thinking", on);
+    try { localStorage.setItem("nomic.showThinking", on ? "1" : "0"); } catch (e) { /* storage blocked */ }
+  };
 
-  const control = (action) => api("POST", `/api/games/${id}/control`, { action }).catch((e) => flash(e.message));
+  const control =(action) => api("POST", `/api/games/${id}/control`, { action }).catch((e) => flash(e.message));
   const intervene = (kind, data) => api("POST", `/api/games/${id}/intervene`, { kind, data }).catch((e) => flash(e.message));
 
   function renderBar() {
@@ -281,12 +373,31 @@ function renderGame(id) {
         ? h("strong", {}, s.winner ? `🏆 ${s.winner} wins` : "No winner", h("span", { class: "muted small" }, ` (${s.end_reason})`))
         : h("span", { class: "small" }, `Turn ${s.completed_turns + 1} · round ${s.round} · ${s.phase} · next: ${s.current_turn ? s.current_turn.player : s.next_player}`),
       h("span", { class: "grow" }),
+      interviewButton(s),
+      h("label", { class: "small row", title: "Each model's private reasoning (max 3 sentences)" },
+        h("input", { type: "checkbox", checked: showThinking, onchange: (e) => setThinking(e.target.checked) }), "💭 Show thinking"),
+      voice.button(),
+      h("a", { class: "btn", href: `/api/games/${id}/transcript`, download: `nomic-${id}.md`, title: "Markdown transcript, including each model's thinking" }, "⬇ Transcript"),
       s.status === "running" ? h("button", { class: "btn", onclick: () => control("pause") }, "⏸ Pause") : null,
       s.status === "paused" ? h("button", { class: "btn primary", onclick: () => control("resume") }, "▶ Resume") : null,
       s.status === "paused" ? h("button", { class: "btn", onclick: () => control("step") }, "⏭ Step one turn") : null,
       h("span", { class: "small" }, `${usd(s.total_cost)}`, s.budget_usd > 0 ? ` / ${usd(s.budget_usd)}` : ""),
       s.budget_usd > 0 ? h("div", { class: `meter ${frac > 0.9 ? "hot" : ""}` }, h("div", { style: `width:${frac * 100}%` })) : null,
     );
+  }
+
+  // After the game: ask model seats that haven't given an interview yet.
+  function interviewButton(s) {
+    if (s.status !== "over") return null;
+    if (s.reflecting) return h("button", { class: "btn", disabled: true }, "🗣 Interviewing players…");
+    const missing = s.players.filter((p) => !p.human && !(p.name in (s.reflections || {})));
+    if (!missing.length) return null;
+    return h("button", { class: "btn", title: "Each AI player reviews the game: decisions, regrets, rivals",
+      onclick: (e) => {
+        e.target.disabled = true;
+        e.target.textContent = "🗣 Interviewing players…";
+        api("POST", `/api/games/${id}/reflect`).catch((err) => flash(err.message));
+      } }, `🗣 Interview players (${missing.length})`);
   }
 
   function renderRules() {
@@ -395,6 +506,7 @@ function renderGame(id) {
     const prop = ctx.proposal;
     const title = { propose: `Your turn, ${req.seat}: propose a rule-change (#${ctx.next_number})`,
       discuss: `${req.seat}: say something about #${prop && prop.number}`,
+      rebut: `${req.seat}: answer the table's comments on your proposal #${prop && prop.number}`,
       vote: `${req.seat}: vote on #${prop && prop.number}`,
       ruling: `Judge: rule on #${prop && prop.number}` }[req.kind];
     const box = h("div", { class: "panel pending stack", style: "margin-bottom:12px" }, h("h2", {}, "⏳ " + title));
@@ -407,8 +519,12 @@ function renderGame(id) {
       const summary = h("input", { placeholder: "One-line pitch", class: "grow" });
       box.append(h("div", { class: "row" }, op, target, summary), text,
         h("button", { class: "btn primary", onclick: () => submit({ op: op.value, target_rule: target.value ? Number(target.value) : null, text: text.value.trim() || null, summary: summary.value }) }, "Propose"));
-    } else if (req.kind === "discuss") {
-      const msg = h("textarea", { placeholder: "Your message to the table" });
+    } else if (req.kind === "discuss" || req.kind === "rebut") {
+      if (req.kind === "rebut") {
+        const cur = state && state.current_turn;
+        (cur ? cur.messages : []).forEach((m) => box.append(h("div", { class: "small" }, h("strong", {}, `${m.player}: `), m.text)));
+      }
+      const msg = h("textarea", { placeholder: req.kind === "rebut" ? "Your reply before they vote" : "Your message to the table" });
       box.append(msg, h("button", { class: "btn primary", onclick: () => submit({ message: msg.value || "(no comment)" }) }, "Send"));
     } else if (req.kind === "vote") {
       const reason = h("input", { placeholder: "reason", class: "grow" });
@@ -460,13 +576,16 @@ function renderGame(id) {
         if (!confirm(`Fork a new game from event #${ev.seq}?`)) return;
         try { const g = await api("POST", `/api/games/${id}/fork`, { seq: ev.seq }); location.hash = `#/game/${g.id}`; } catch (e) { flash(e.message); }
       } }, "fork"));
-    const item = (cls, ...kids) => h("div", { class: `ev ${cls}` }, ...kids, actions);
+    const thinking = d.thinking ? h("div", { class: "thinking" }, "💭 ", d.thinking) : null;
+    const item = (cls, ...kids) => h("div", { class: `ev ${cls}`, "data-seq": ev.seq }, ...kids, thinking, actions);
     switch (ev.type) {
-      case "turn_started": return h("div", { class: "turn-head" }, `Turn ${d.turn} · round ${d.round} · ${d.player}`);
+      case "turn_started": return h("div", { class: "turn-head", "data-seq": ev.seq }, `Turn ${d.turn} · round ${d.round} · ${d.player}`);
       case "proposal": return item("proposal", proposalView(d));
       case "message": return d.kind === "gm"
         ? item("gm", h("strong", {}, "[GM] "), d.text)
-        : item("", h("strong", {}, `${d.player}: `), d.text);
+        : d.kind === "rebuttal"
+          ? item("rebuttal", h("strong", {}, `↩ ${d.player} replies: `), d.text)
+          : item("", h("strong", {}, `${d.player}: `), d.text);
       case "vote": return item("", h("span", { class: d.vote }, d.vote.toUpperCase()), ` ${d.player} — ${d.reason}`,
         d.dispute ? h("div", { class: "error small" }, `Dispute: ${d.dispute}`) : null);
       case "dice_roll": return item("system", `🎲 ${d.player} rolled ${d.value}`);
@@ -482,6 +601,7 @@ function renderGame(id) {
       case "turn_aborted": return item("system", `Turn ${d.turn} aborted: ${d.reason}`);
       case "model_swapped": return item("human", `[human] ${d.player} is now ${d.model || "human"}`);
       case "budget_changed": return item("human", `[human] budget set to ${usd(d.budget_usd)}`);
+      case "reflection": return item("reflection", reflectionView(d));
       case "game_over": return item("ruling pass", h("strong", {}, `Game over: ${d.winner ? d.winner + " wins" : "no winner"}`), ` (${d.reason})`);
       case "game_created": return item("system", `Game created: ${d.config.ruleset}, ${d.players.map((p) => `${p.name} (${p.model || "human"})`).join(", ")}`);
       default: return null; // llm_usage, turn_ended
@@ -496,6 +616,7 @@ function renderGame(id) {
       if (el) feed.append(el);
     }
     if (nearBottom) centre.scrollTop = centre.scrollHeight;
+    voice.decorate();
   }
 
   function applyState(s, ruleChange) {
@@ -505,6 +626,7 @@ function renderGame(id) {
     if (ruleChange || !rulesBox.childElementCount) renderRules();
     renderPending(s.pending || []);
     if (!toolsBuilt) { buildTools(); toolsBuilt = true; }
+    if (tab === "stats") renderStatsSoon();
   }
 
   function connect() {
@@ -522,6 +644,9 @@ function renderGame(id) {
         applyState(msg.state, ["rule_changed", "turn_started"].includes(msg.event.type));
       } else if (msg.type === "pending") {
         if (state) { state.pending = msg.pending; renderPending(msg.pending); }
+      } else if (msg.type === "voice") {
+        voice.onStatus(msg.status);
+        if (state) renderBar();
       }
     };
     ws.onclose = (e) => {
@@ -530,6 +655,7 @@ function renderGame(id) {
       setTimeout(connect, 1500);
     };
   }
+  setTab(tab);
   connect();
-  return () => { closed = true; if (ws) ws.close(); };
+  return () => { closed = true; voice.destroy(); if (ws) ws.close(); };
 }

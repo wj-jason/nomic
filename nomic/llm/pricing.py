@@ -85,7 +85,11 @@ POINTS_PER_TURN = 3.3  # die average minus failed-proposal penalties, plus rule-
 RULES_TOKENS = {"lite": 1100, "suber": 4200}
 SYSTEM_TOKENS = 900
 REASONING_TOKENS = {"none": 0, "minimal": 150, "low": 400, "medium": 1200, "high": 3000}
-VISIBLE_OUT = {"propose": 350, "discuss": 150, "vote": 120, "ruling": 500}
+THINKING_OUT = 60  # the short visible "thinking" field on every action
+VISIBLE_OUT = {
+    k: v + THINKING_OUT
+    for k, v in {"propose": 350, "discuss": 150, "vote": 120, "ruling": 500}.items()
+}
 
 
 def _price(pricing: Pricing, model: str | None) -> ModelPrice | None:
@@ -105,14 +109,14 @@ def estimate_game_cost(cfg: GameConfig, pricing: Pricing) -> dict[str, Any]:
     prefix = SYSTEM_TOKENS + RULES_TOKENS[cfg.ruleset]
     per_turn_detail = 200 + 200 * k if cfg.discussion else 200 + 90 * k
     state = 1500 + cfg.history_turns * per_turn_detail + 15 * turns // 2
-    reasoning = REASONING_TOKENS[cfg.reasoning_effort]
 
     def call_cost(p: ModelPrice, extra_in: int, kind: str) -> float:
+        effort = cfg.judge.reasoning_effort if kind == "ruling" else cfg.reasoning_effort
         read = p.cache_read if p.cache_read is not None else p.prompt
         return (
             prefix * read
             + (state + extra_in) * p.prompt
-            + (VISIBLE_OUT[kind] + reasoning) * p.completion
+            + (VISIBLE_OUT[kind] + REASONING_TOKENS[effort]) * p.completion
         )
 
     seats: dict[str, float] = {}
@@ -124,9 +128,18 @@ def estimate_game_cost(cfg: GameConfig, pricing: Pricing) -> dict[str, Any]:
             if s.model and not s.model.startswith("mock/"):
                 unknown.append(s.model)
             continue
-        cost = rounds_eff * call_cost(p, 0, "propose") + turns * call_cost(p, 0, "vote")
+        # Each seat proposes once a round and votes on everyone else's proposals; with
+        # discussion it comments on others' proposals and rebuts on its own (one message a turn).
+        own_turns = rounds_eff
+        cost = own_turns * call_cost(p, 0, "propose") + (turns - own_turns) * call_cost(
+            p, 0, "vote"
+        )
         if cfg.discussion:
             cost += turns * call_cost(p, 0, "discuss")
+        if cfg.reflection:
+            # one interview over the whole game record (~350 tokens per turn), ~700 out
+            read = p.cache_read if p.cache_read is not None else p.prompt
+            cost += prefix * read + turns * 350 * p.prompt + 700 * p.completion
         seats[s.name] = cost
 
     judge = 0.0

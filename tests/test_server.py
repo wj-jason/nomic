@@ -79,6 +79,11 @@ def test_api_flow(tmp_path: Any, monkeypatch: Any) -> None:
             snap = ws.receive_json()
             assert snap["type"] == "snapshot" and snap["events"][0]["type"] == "game_created"
 
+        t = c.get(f"/api/games/{gid}/transcript")
+        assert t.status_code == 200 and "attachment" in t.headers["content-disposition"]
+        assert t.text.startswith(f"# Nomic game {gid}") and "Hats." in t.text
+        assert "## Rules at the end" in t.text
+
         c.post(f"/api/games/{gid}/control", json={"action": "pause"})
         r = c.post(
             f"/api/games/{gid}/intervene",

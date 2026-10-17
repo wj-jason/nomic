@@ -3,15 +3,44 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Op = Literal["enact", "repeal", "amend", "transmute"]
-ActionKind = Literal["propose", "discuss", "vote"]
+ActionKind = Literal["propose", "discuss", "rebut", "vote"]
+
+THINKING_SENTENCES = 3
+THINKING_MAX_CHARS = 450
 
 
-class ProposalAction(BaseModel):
+def clip_thinking(text: str) -> str:
+    """Keep the first few sentences of a model's private reasoning."""
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+    out = " ".join(sentences[:THINKING_SENTENCES])
+    if len(out) > THINKING_MAX_CHARS:
+        out = out[: THINKING_MAX_CHARS - 1].rstrip() + "…"
+    return out
+
+
+class _Thinks(BaseModel):
+    """Every action starts with a short private rationale (declared first, so models write
+    it before committing to an answer). It is stored and shown to the human, but never put
+    in another player's or the judge's prompt."""
+
+    thinking: str = Field(
+        default="",
+        description="Your private reasoning in at most 3 sentences. Never shown to other players.",
+    )
+
+    @field_validator("thinking")
+    @classmethod
+    def _clip(cls, v: str) -> str:
+        return clip_thinking(v)
+
+
+class ProposalAction(_Thinks):
     op: Op
     target_rule: int | None = Field(
         default=None, description="Rule to repeal, amend or transmute; null when enacting."
@@ -22,11 +51,11 @@ class ProposalAction(BaseModel):
     summary: str = Field(description="One or two sentences pitching the proposal to voters.")
 
 
-class DiscussAction(BaseModel):
+class DiscussAction(_Thinks):
     message: str = Field(description="What you say to the table (under 120 words).")
 
 
-class VoteAction(BaseModel):
+class VoteAction(_Thinks):
     vote: Literal["yes", "no"]
     reason: str = Field(description="One sentence explaining your vote.")
     dispute: str | None = Field(
@@ -53,7 +82,7 @@ class ScoreDelta(BaseModel):
     reason: str
 
 
-class RulingAction(BaseModel):
+class RulingAction(_Thinks):
     legal: bool = Field(description="Whether the proposal was a legal move.")
     passed: bool = Field(description="Whether the proposal was adopted under the current rules.")
     rule_changes: list[RuleChange] = Field(
@@ -68,11 +97,28 @@ class RulingAction(BaseModel):
     rationale: str = Field(description="Short explanation citing rule numbers.")
 
 
+class ReflectionAction(BaseModel):
+    """A player's post-game interview. Public: shown in the feed and the transcript."""
+
+    overview: str = Field(description="How the game went for you, in 2-4 sentences.")
+    key_decisions: str = Field(
+        description="Your most important decisions (proposals, votes, deals) and why you made "
+        "them, in 2-5 sentences."
+    )
+    would_change: str = Field(description="What you would do differently, in 2-4 sentences.")
+    about_others: str = Field(
+        description="Your read on the other players' strategies and who played best, in 2-4 "
+        "sentences."
+    )
+
+
 ACTION_MODELS: dict[str, type[BaseModel]] = {
     "propose": ProposalAction,
     "discuss": DiscussAction,
+    "rebut": DiscussAction,  # the proposer answering the table's comments
     "vote": VoteAction,
     "ruling": RulingAction,
+    "reflect": ReflectionAction,
 }
 
 

@@ -1,13 +1,13 @@
 # Live smoke test: two budget models, 10 turns, well under $0.10.
 ruleset: lite
 seats:
-  - {name: Ada, model: deepseek/deepseek-v4-flash}
-  - {name: Bo, model: deepseek/deepseek-v4-flash}
+  - {name: deepseek-1, model: deepseek/deepseek-v4-flash}
+  - {name: deepseek-2, model: deepseek/deepseek-v4-flash}
 judge:
   mode: llm
   model: deepseek/deepseek-v4-flash
 budget_usd: 0.25
 max_turns: 10
 discussion: true
-reasoning_effort: low
+reasoning_effort: none
 seed: 1
